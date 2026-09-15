@@ -7,12 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/roshbhatia/go-utils/git"
 	"github.com/roshbhatia/go-utils/paths"
-	"github.com/roshbhatia/go-utils/workspace"
 )
-
-func RootAt(dir string) (string, error) { return git.Root(dir) }
 
 func WorkerDir(root string) string {
 	return keyed(paths.AgentWorker(), root)
@@ -36,9 +32,3 @@ func keyed(dir, root string) string {
 	digest := hex.EncodeToString(sum[:])[:16]
 	return fmt.Sprintf("%s/%s-%s", dir, filepath.Base(root), digest)
 }
-
-// pkgs/internal/workspace owns the boundary rule, because changes reads it too
-// and two copies would drift.
-func DeclaredWorkspace(dir string) string { return workspace.Declared(dir) }
-
-func Workspace(dir string) string { return workspace.Root(dir) }

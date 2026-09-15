@@ -19,7 +19,7 @@
         {
           default = pkgs.buildGoModule {
             pname = "worker";
-            version = "0.1.0";
+            version = "0.1.1";
             src = ./.;
             vendorHash = "sha256-mkdMPljkn+pfruuPBby+CjrpJxmOpWT7EFtIueZxRnc=";
             subPackages = [

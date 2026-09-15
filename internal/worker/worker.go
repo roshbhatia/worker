@@ -18,6 +18,7 @@ import (
 
 	"github.com/roshbhatia/agent-signals/state"
 	"github.com/roshbhatia/go-utils/paths"
+	wsroot "github.com/roshbhatia/go-utils/workspace"
 	"github.com/roshbhatia/worker/internal/repo"
 )
 
@@ -116,7 +117,7 @@ type workspace struct {
 }
 
 func newWorkspace(dir string) (*workspace, error) {
-	root := repo.Workspace(dir)
+	root := wsroot.Root(dir)
 
 	override := strings.TrimSpace(os.Getenv(sessionOverride))
 	if override == "" {
