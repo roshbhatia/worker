@@ -21,7 +21,7 @@
             pname = "worker";
             version = "0.1.1";
             src = ./.;
-            vendorHash = "sha256-1Q3E7z50/pF6hHcbC+E8McRU+xyQAVF7inc+zxXFwA0=";
+            vendorHash = "sha256-mkdMPljkn+pfruuPBby+CjrpJxmOpWT7EFtIueZxRnc=";
             subPackages = [
               "cmd/worker"
               "cmd/agent-watch"
@@ -32,7 +32,7 @@
                 wrapProgram "$out/bin/$command" --prefix PATH : ${
                   pkgs.lib.makeBinPath [
                     pkgs.git
-                    pkgs.tmux
+                    pkgs.wezterm
                     pkgs.zsh
                     pkgs.coreutils
                   ]
