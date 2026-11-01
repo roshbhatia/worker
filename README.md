@@ -12,7 +12,7 @@ agent-watch worker --log tests
 nix run github:roshbhatia/worker -- --help
 ```
 
-Run `worker` inside WezTerm. It needs `wezterm`, `git`, and `zsh` on PATH; the Nix package supplies them.
+Run `worker` inside tmux. It needs `tmux`, `git`, and `zsh` on PATH; the Nix package supplies them.
 The caller owns the command string. Arguments after the options form one shell command.
 Use `worker --help` and `agent-watch --help` for flags and cleanup commands.
 A timeout returns 75. A blocked run returns 76 with `--wait-blocked`. A missing directory returns 78; a closed pane returns 129.

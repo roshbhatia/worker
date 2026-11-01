@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,7 +21,7 @@ import (
 	"github.com/roshbhatia/worker/internal/repo"
 )
 
-const Summary = "run a command in one reused WezTerm pane and report the result"
+const Summary = "run a command in one reused tmux pane and report the result"
 
 const usage = `usage: worker [-w SECONDS] [-t N] [-n NAME] <command...>
        worker --status | --close | --release NAME
@@ -77,9 +76,9 @@ func Run(args []string) int {
 		return 0
 	}
 
-	pane := os.Getenv("WEZTERM_PANE")
+	pane := os.Getenv("TMUX_PANE")
 	if pane == "" {
-		return fail(errors.New("not inside a WezTerm pane"))
+		return fail(errors.New("not inside a tmux pane"))
 	}
 
 	dir, err := callerDir()
@@ -169,15 +168,16 @@ func (w *workspace) bodyFile(name string) string { return filepath.Join(w.dir, n
 func (w *workspace) pane(caller string) (string, error) {
 	if currentMux() == "0" {
 		return "", fmt.Errorf(
-			"%w: this pane reports WEZTERM_UNIX_SOCKET=%q, which is not a gui-sock-<n> socket, so no record can be written or matched; a worker is supported from a GUI pane",
-			errProbe, os.Getenv("WEZTERM_UNIX_SOCKET"))
+			"%w: tmux could not report the server process for pane %q, so no worker record can be matched",
+			errProbe, os.Getenv("TMUX_PANE"))
 	}
 
+	caller = normalizePaneID(caller)
 	recorded, err := os.ReadFile(w.paneFile())
 	if err != nil {
 		return "", errors.New("none recorded")
 	}
-	id := strings.TrimSpace(string(recorded))
+	id := normalizePaneID(strings.TrimSpace(string(recorded)))
 	if id == "" {
 		return "", errors.New("none recorded")
 	}
@@ -287,7 +287,7 @@ func (w *workspace) recordedID() string {
 	if err != nil {
 		return "?"
 	}
-	return strings.TrimSpace(string(body))
+	return normalizePaneID(string(body))
 }
 
 func (w *workspace) claim(requested string) (string, error) {
@@ -313,6 +313,9 @@ func (w *workspace) claim(requested string) (string, error) {
 }
 
 func (w *workspace) underLock(fn func() error) error {
+	if err := os.MkdirAll(w.dir, 0o700); err != nil {
+		return fmt.Errorf("could not create worker state directory: %w", err)
+	}
 	handle, err := os.OpenFile(w.lockFile(), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
@@ -403,7 +406,7 @@ func (w *workspace) writeBody(path, name, dir, command string) error {
 }
 
 func clearBlocked() string {
-	record := shellQuote(paths.AgentPanes()) + `/${WEZTERM_PANE:-none}.json`
+	record := shellQuote(paths.AgentPanes()) + `/${TMUX_PANE:-none}.json`
 	return fmt.Sprintf(
 		"  [[ -f %s ]] && %s agent-state worker idle 'the worker run ended' < /dev/null > /dev/null 2>&1",
 		record, shellQuote(self()))
@@ -426,16 +429,24 @@ func (w *workspace) writeHeader(name, dir, command string) error {
 }
 
 func (w *workspace) send(target, name, body string) error {
-	// The pane shell is nushell, which rejects `2>&1` and gives a single-quoted
-	// string no escape at all, so shellQuote's `'\''` would not survive there.
-	// The pipeline is therefore one fixed literal that zsh and nushell read the
-	// same way, and both paths ride in as argv words that zsh expands itself.
-	line := fmt.Sprintf("\025clear; zsh -c 'zsh \"$1\" 2>&1 | tee -a \"$2\"' worker %s %s\n",
+	target = normalizePaneID(target)
+	line := fmt.Sprintf("clear; zsh -c 'zsh \"$1\" 2>&1 | tee -a \"$2\"' worker %s %s",
 		shellQuote(body), shellQuote(w.logFile(name)))
-	return muxRun([]string{"cli", "send-text", "--pane-id", target, "--no-paste"}, line)
+	buffer := "sysinit-worker-" + strconv.Itoa(os.Getpid())
+	if err := muxRun([]string{"send-keys", "-t", target, "C-u"}, ""); err != nil {
+		return err
+	}
+	if err := muxRun([]string{"load-buffer", "-b", buffer, "-"}, line); err != nil {
+		return err
+	}
+	if err := muxRun([]string{"paste-buffer", "-p", "-d", "-b", buffer, "-t", target}, ""); err != nil {
+		return err
+	}
+	return muxRun([]string{"send-keys", "-t", target, "Enter"}, "")
 }
 
 func (w *workspace) retire(caller string) {
+	caller = normalizePaneID(caller)
 	marker := w.runningRun()
 	if marker == "" {
 		return
@@ -454,11 +465,12 @@ func superseded(caller string) string {
 	if caller == "" {
 		return ""
 	}
+	caller = strings.TrimPrefix(normalizePaneID(caller), "%")
 	body, err := os.ReadFile(filepath.Join(paths.AgentWtrun(), "pane-"+caller, "worker-pane"))
 	if err != nil {
 		return ""
 	}
-	id := strings.TrimSpace(string(body))
+	id := normalizePaneID(string(body))
 	if id == "" || id == caller {
 		return ""
 	}
@@ -501,7 +513,7 @@ func prune(keepLegacy bool) string {
 		}
 		id := ""
 		if body, err := os.ReadFile(filepath.Join(root, name, "worker-pane")); err == nil {
-			id = strings.TrimSpace(string(body))
+			id = normalizePaneID(string(body))
 		}
 		if id == "" || live[id] {
 			continue
@@ -543,14 +555,13 @@ func removeDead(dir string) bool {
 
 func (w *workspace) split(caller string) (string, error) {
 	w.retire(caller)
-	out, err := muxOutput([]string{
-		"cli", "split-pane", "--pane-id", caller, "--bottom", "--percent", "40",
-	})
+	caller = normalizePaneID(caller)
+	out, err := muxOutput([]string{"split-window", "-P", "-F", "#{pane_id}", "-t", caller, "-v", "-p", "40"})
 	if err != nil {
 		return "", fmt.Errorf("could not create a pane: %w", err)
 	}
-	id := digits(out)
-	if id == "" {
+	id := strings.TrimSpace(out)
+	if len(id) < 2 || id[0] != '%' {
 		return "", fmt.Errorf("could not read a pane id from %q", strings.TrimSpace(out))
 	}
 
@@ -562,7 +573,7 @@ func (w *workspace) split(caller string) (string, error) {
 	}
 
 	time.Sleep(time.Second)
-	_ = muxRun([]string{"cli", "activate-pane", "--pane-id", caller}, "")
+	_ = muxRun([]string{"select-pane", "-t", caller}, "")
 	return id, nil
 }
 
@@ -694,7 +705,7 @@ func (w *workspace) closePane(caller string) int {
 		fmt.Printf("no worker for %s (%v)%s\n", w.root, err, w.forget())
 		return 0
 	}
-	if err := muxRun([]string{"cli", "kill-pane", "--pane-id", target}, ""); err != nil {
+	if err := muxRun([]string{"kill-pane", "-t", target}, ""); err != nil {
 		return fail(fmt.Errorf("could not kill pane %s, so its record is kept: %w", target, err))
 	}
 	fmt.Printf("closed pane %s for %s%s%s\n", target, w.root, w.forget(), clearState(target))
@@ -729,6 +740,7 @@ func (w *workspace) forget() string {
 }
 
 func (w *workspace) blocked(target, name string) (string, bool) {
+	target = normalizePaneID(target)
 	if target == "" || name == "" || w.runningRun() != name {
 		return "", false
 	}
@@ -849,36 +861,35 @@ func paneAlive(id string) (bool, error) {
 }
 
 func livePanes() (map[string]bool, error) {
-	out, err := muxOutput([]string{"cli", "list", "--format", "json"})
+	out, err := muxOutput([]string{"list-panes", "-a", "-F", "#{pane_id}"})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errProbe, err)
 	}
-	var panes []struct {
-		PaneID int `json:"pane_id"`
-	}
-	if err := json.Unmarshal([]byte(out), &panes); err != nil {
-		return nil, fmt.Errorf("%w: could not read the pane list: %w", errProbe, err)
-	}
-	live := make(map[string]bool, len(panes))
-	for _, p := range panes {
-		live[strconv.Itoa(p.PaneID)] = true
+	live := make(map[string]bool)
+	for _, pane := range strings.Fields(out) {
+		if len(pane) < 2 || pane[0] != '%' {
+			return nil, fmt.Errorf("%w: invalid tmux pane id %q", errProbe, pane)
+		}
+		live[pane] = true
 	}
 	return live, nil
 }
 
-func muxArgs(args []string) []string {
-	if len(args) == 0 || args[0] != "cli" {
-		return append([]string(nil), args...)
+func normalizePaneID(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "%") {
+		return value
 	}
-	guarded := make([]string, 0, len(args)+1)
-	guarded = append(guarded, "cli", "--no-auto-start")
-	return append(guarded, args[1:]...)
+	if value != "" && strings.Trim(value, "0123456789") == "" {
+		return "%" + value
+	}
+	return value
 }
 
 func muxOutputCmd(args []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), muxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "wezterm", muxArgs(args)...)
+	cmd := exec.CommandContext(ctx, "tmux", args...)
 
 	cmd.WaitDelay = muxTimeout
 	out, err := cmd.Output()
@@ -891,7 +902,7 @@ func muxOutputCmd(args []string) (string, error) {
 func muxRunCmd(args []string, stdin string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), muxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "wezterm", muxArgs(args)...)
+	cmd := exec.CommandContext(ctx, "tmux", args...)
 	cmd.WaitDelay = muxTimeout
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -1076,14 +1087,4 @@ func validRunName(name string) error {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func digits(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

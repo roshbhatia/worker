@@ -3,11 +3,11 @@ package worker
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,7 +42,12 @@ func state(t *testing.T) string {
 	}
 	t.Setenv("SYSINIT_PATHS_MANIFEST", manifest)
 
-	t.Setenv("WEZTERM_UNIX_SOCKET", "/tmp/gui-sock-4242")
+	tmuxBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmuxBin, "tmux"), []byte("#!/bin/sh\n[ \"$1\" = display-message ] && printf '4242\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmuxBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_PANE", "%4242")
 	return filepath.Join(home, "worker")
 }
 
@@ -91,29 +96,25 @@ func (f *fakeMux) install(t *testing.T) {
 
 		f.actions = append(f.actions, strings.Join(args, " "))
 		switch {
-		case len(args) > 1 && args[1] == "list":
+		case len(args) > 0 && args[0] == "list-panes":
 			if f.listFail {
 				return "", os.ErrDeadlineExceeded
 			}
-			type pane struct {
-				PaneID int `json:"pane_id"`
-			}
-			list := make([]pane, 0, len(f.panes))
+			var list strings.Builder
 			for _, id := range f.panes {
-				list = append(list, pane{PaneID: id})
+				fmt.Fprintf(&list, "%%%d\n", id)
 			}
-			out, _ := json.Marshal(list)
-			return string(out), nil
-		case len(args) > 1 && args[1] == "split-pane":
+			return list.String(), nil
+		case len(args) > 0 && args[0] == "split-window":
 			f.panes = append(f.panes, f.split)
-			return "\n" + strconv.Itoa(f.split) + "\n", nil
+			return fmt.Sprintf("\n%%%d\n", f.split), nil
 		}
 		return "", nil
 	}
 	muxRun = func(args []string, stdin string) error {
 		joined := strings.Join(args, " ")
 		if f.fail ||
-			(f.sendFail && strings.Contains(joined, "send-text")) ||
+			(f.sendFail && strings.Contains(joined, "paste-buffer")) ||
 			(f.killFail && strings.Contains(joined, "kill-pane")) {
 			return os.ErrDeadlineExceeded
 		}
@@ -128,7 +129,7 @@ func (f *fakeMux) install(t *testing.T) {
 func (f *fakeMux) splits() int {
 	n := 0
 	for _, action := range f.actions {
-		if strings.Contains(action, "split-pane") {
+		if strings.Contains(action, "split-window") {
 			n++
 		}
 	}
@@ -138,12 +139,12 @@ func (f *fakeMux) splits() int {
 func (f *fakeMux) typed(t *testing.T) (target, line string) {
 	t.Helper()
 	for _, action := range f.actions {
-		if !strings.Contains(action, "send-text") {
+		if !strings.Contains(action, "paste-buffer") {
 			continue
 		}
 		words := strings.Fields(action)
 		for i, word := range words {
-			if word == "--pane-id" && i+1 < len(words) {
+			if word == "-t" && i+1 < len(words) {
 				target = words[i+1]
 			}
 		}
@@ -210,16 +211,19 @@ func TestALiveWorkerRecordedByAnotherPaneIsReused(t *testing.T) {
 	}
 
 	target, line := mux.typed(t)
-	if target != "12" {
+	if target != "%12" {
 		t.Errorf("the command went to pane %s, want the recorded worker 12", target)
 	}
-	if !strings.HasPrefix(line, "\025clear; ") {
-		t.Errorf("sent line %q does not open with C-u and clear", line)
+	if !strings.HasPrefix(line, "clear; ") {
+		t.Errorf("sent line %q does not open with clear", line)
+	}
+	if !strings.Contains(strings.Join(mux.actions, "\n"), "send-keys -t %12 C-u") {
+		t.Errorf("the pane input line was not cleared first: %v", mux.actions)
 	}
 	if !strings.Contains(line, "| tee -a ") || !strings.Contains(line, "run1.log") {
 		t.Errorf("sent line %q does not tee into the run's own log", line)
 	}
-	if !strings.Contains(out, "pane 12  run1  in "+dir+"  log ") {
+	if !strings.Contains(out, "pane %12  run1  in "+dir+"  log ") {
 		t.Errorf("start line = %q, want the pane, the name, the directory, and the log", out)
 	}
 
@@ -249,21 +253,21 @@ func TestASupersededWorkerIsReportedAndLeftAlone(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("start = %d, want 0", code)
 	}
-	if !strings.Contains(out, "pane 12") || !strings.Contains(out, "pane-7") {
+	if !strings.Contains(out, "pane %12") || !strings.Contains(out, "pane-7") {
 		t.Errorf("output = %q, want one line naming the held pane and the key it is under", out)
 	}
 	if mux.splits() != 1 {
 		t.Errorf("panes split = %d, want exactly 1: the old worker is not adopted", mux.splits())
 	}
 	target, _ := mux.typed(t)
-	if target != "99" {
+	if target != "%99" {
 		t.Errorf("the command went to pane %s, want the freshly split 99", target)
 	}
 	for _, action := range mux.actions {
-		if strings.Contains(action, "kill-pane") && strings.Contains(action, "12") {
+		if strings.Contains(action, "kill-pane") && strings.Contains(action, "%12") {
 			t.Error("the superseded worker was killed")
 		}
-		if strings.Contains(action, "send-text") && strings.Contains(action, "--pane-id 12") {
+		if strings.Contains(action, "paste-buffer") && strings.Contains(action, "-t %12") {
 			t.Error("a command was sent to the superseded worker")
 		}
 	}
@@ -297,7 +301,7 @@ func TestADeadSupersededWorkerIsNotReported(t *testing.T) {
 func TestDeadRecordedPaneIsReplaced(t *testing.T) {
 	dir := state(t)
 	fast(t)
-	t.Setenv("WEZTERM_PANE", "7")
+	t.Setenv("TMUX_PANE", "%7")
 	mux := &fakeMux{panes: []int{7}, split: 9}
 	mux.install(t)
 
@@ -314,22 +318,22 @@ func TestDeadRecordedPaneIsReplaced(t *testing.T) {
 	}
 
 	target, _ := mux.typed(t)
-	if target != "9" {
+	if target != "%9" {
 		t.Errorf("the command went to pane %s, want the freshly split 9", target)
 	}
 	for _, action := range mux.actions {
-		if strings.Contains(action, "send-text") && strings.Contains(action, "--pane-id 404") {
+		if strings.Contains(action, "paste-buffer") && strings.Contains(action, "-t %404") {
 			t.Error("a command was sent to the dead recorded pane")
 		}
 	}
 
-	if !strings.Contains(strings.Join(mux.actions, "\n"), "activate-pane --pane-id 7") {
+	if !strings.Contains(strings.Join(mux.actions, "\n"), "select-pane -t %7") {
 		t.Errorf("focus was not returned to the caller: %v", mux.actions)
 	}
 
 	body, err := os.ReadFile(ws.paneFile())
-	if err != nil || strings.TrimSpace(string(body)) != "9" {
-		t.Errorf("pane file = %q, %v; want 9", body, err)
+	if err != nil || strings.TrimSpace(string(body)) != "%9" {
+		t.Errorf("pane file = %q, %v; want %%9", body, err)
 	}
 	if !strings.HasPrefix(ws.dir, dir) {
 		t.Errorf("record %q is not under the manifest directory %q", ws.dir, dir)
@@ -409,8 +413,8 @@ func TestRejectsAPaneFromAnEarlierMuxGeneration(t *testing.T) {
 	}
 
 	ws.live(t, "1")
-	if got, err := ws.pane("7"); err != nil || got != "1" {
-		t.Errorf("pane() in its own generation = %q, %v; want \"1\", nil", got, err)
+	if got, err := ws.pane("7"); err != nil || got != "%1" {
+		t.Errorf("pane() in its own generation = %q, %v; want \"%%1\", nil", got, err)
 	}
 }
 
@@ -436,7 +440,7 @@ func TestAnUnverifiableGenerationIsNotTreatedAsCurrent(t *testing.T) {
 	}
 
 	ws.live(t, "1")
-	t.Setenv("WEZTERM_UNIX_SOCKET", "")
+	t.Setenv("TMUX_PANE", "")
 	if _, err := ws.pane("7"); err == nil {
 		t.Error("a caller with no generation matched a record anyway")
 	}
@@ -471,7 +475,7 @@ func TestAnUnanswerableProbeDoesNotSplitASecondWorker(t *testing.T) {
 		t.Errorf("start with an unanswerable probe = %d, want 2", code)
 	}
 	for _, action := range mux.actions {
-		if strings.Contains(action, "split-pane") {
+		if strings.Contains(action, "split-window") {
 			t.Error("a second worker was split while the first one's state was unknown")
 		}
 	}
@@ -925,7 +929,7 @@ func TestAFailedSendDoesNotBurnTheName(t *testing.T) {
 
 func TestACallerWithNoGenerationRefusesInsteadOfSplittingForever(t *testing.T) {
 	state(t)
-	t.Setenv("WEZTERM_UNIX_SOCKET", "/tmp/not-a-gui-sock")
+	t.Setenv("TMUX_PANE", "")
 	mux := &fakeMux{panes: []int{7, 12}, split: 99}
 	mux.install(t)
 
@@ -941,7 +945,7 @@ func TestACallerWithNoGenerationRefusesInsteadOfSplittingForever(t *testing.T) {
 		t.Errorf("start with no generation = %d, want 2", code)
 	}
 	for _, action := range mux.actions {
-		if strings.Contains(action, "split-pane") {
+		if strings.Contains(action, "split-window") {
 			t.Fatal("a worker was split that the next invocation would refuse again")
 		}
 	}
@@ -1019,7 +1023,7 @@ func TestCloseRecordsACodeForTheRunItKilled(t *testing.T) {
 
 func TestAQueryDoesNotCreateTheRecord(t *testing.T) {
 	state(t)
-	t.Setenv("WEZTERM_PANE", "7")
+	t.Setenv("TMUX_PANE", "%7")
 	mux := &fakeMux{panes: []int{7}}
 	mux.install(t)
 
@@ -1470,7 +1474,7 @@ func TestStatusReportsTheThreeStatesItDeclares(t *testing.T) {
 
 	ws.live(t, "12")
 	out = captured(t, func() { code = ws.reportStatus("7") })
-	if code != 0 || !strings.Contains(out, "pane 12  idle  in "+ws.root) {
+	if code != 0 || !strings.Contains(out, "pane %12  idle  in "+ws.root) {
 		t.Errorf("--status on an idle worker = %d, %q", code, out)
 	}
 
@@ -1478,19 +1482,19 @@ func TestStatusReportsTheThreeStatesItDeclares(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = captured(t, func() { code = ws.reportStatus("7") })
-	if code != 0 || !strings.Contains(out, "pane 12  running build  log "+ws.logFile("build")) {
+	if code != 0 || !strings.Contains(out, "pane %12  running build  log "+ws.logFile("build")) {
 		t.Errorf("--status on a busy worker = %d, %q", code, out)
 	}
 }
 
-func TestRefusesOutsideWezTermWithoutTouchingTheMux(t *testing.T) {
+func TestRefusesOutsideTmuxWithoutTouchingTheMux(t *testing.T) {
 	state(t)
-	t.Setenv("WEZTERM_PANE", "")
+	t.Setenv("TMUX_PANE", "")
 	mux := &fakeMux{panes: []int{7}, split: 9}
 	mux.install(t)
 
 	if code := Run([]string{"true"}); code != 2 {
-		t.Errorf("Run outside wezterm = %d, want 2", code)
+		t.Errorf("Run outside tmux = %d, want 2", code)
 	}
 	if len(mux.actions) != 0 {
 		t.Errorf("the mux was called %d times: %v", len(mux.actions), mux.actions)
@@ -1502,7 +1506,7 @@ func TestRefusesOutsideWezTermWithoutTouchingTheMux(t *testing.T) {
 
 func TestARemovedWorkingDirectoryStopsTheCallAndSplitsNothing(t *testing.T) {
 	state(t)
-	t.Setenv("WEZTERM_PANE", "7")
+	t.Setenv("TMUX_PANE", "%7")
 	mux := &fakeMux{panes: []int{7}, split: 9}
 	mux.install(t)
 
@@ -1525,7 +1529,7 @@ func TestARemovedWorkingDirectoryStopsTheCallAndSplitsNothing(t *testing.T) {
 
 func TestABadRunNameIsRefusedBeforeAPaneIsCreated(t *testing.T) {
 	state(t)
-	t.Setenv("WEZTERM_PANE", "7")
+	t.Setenv("TMUX_PANE", "%7")
 	t.Chdir(t.TempDir())
 	mux := &fakeMux{panes: []int{7}, split: 9}
 	mux.install(t)
@@ -1545,7 +1549,7 @@ func TestABadRunNameIsRefusedBeforeAPaneIsCreated(t *testing.T) {
 
 func TestAMuxCallIsBoundedByARealTimeout(t *testing.T) {
 	stub := t.TempDir()
-	script := filepath.Join(stub, "wezterm")
+	script := filepath.Join(stub, "tmux")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1559,8 +1563,8 @@ func TestAMuxCallIsBoundedByARealTimeout(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"muxOutputCmd", func() error { _, err := muxOutputCmd([]string{"cli", "list"}); return err }},
-		{"muxRunCmd", func() error { return muxRunCmd([]string{"cli", "activate-pane"}, "") }},
+		{"muxOutputCmd", func() error { _, err := muxOutputCmd([]string{"list-panes"}); return err }},
+		{"muxRunCmd", func() error { return muxRunCmd([]string{"select-pane"}, "") }},
 	} {
 		started := time.Now()
 		err := probe.call()
@@ -1576,31 +1580,17 @@ func TestAMuxCallIsBoundedByARealTimeout(t *testing.T) {
 	}
 }
 
-func TestEveryMuxCLICommandDisablesAutostart(t *testing.T) {
-	got := muxArgs([]string{"cli", "list", "--format", "json"})
-	want := []string{"cli", "--no-auto-start", "list", "--format", "json"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("muxArgs() = %q, want %q", got, want)
-	}
-}
-
-func TestASocketThatIsNotAGuiSockIsNamedInTheRefusal(t *testing.T) {
+func TestRefusesWhenTmuxCannotReportItsServerPID(t *testing.T) {
 	state(t)
 	mux := &fakeMux{panes: []int{7, 12}}
 	mux.install(t)
 	ws := workspaceIn(t, t.TempDir())
 	ws.live(t, "12")
 
-	t.Setenv("WEZTERM_UNIX_SOCKET", "/tmp/r3-probe-sock")
+	t.Setenv("TMUX_PANE", "")
 	_, err := ws.pane("7")
 	if !errors.Is(err, errProbe) {
 		t.Fatalf("pane() = %v, want an errProbe", err)
-	}
-	if !strings.Contains(err.Error(), `"/tmp/r3-probe-sock"`) {
-		t.Errorf("refusal = %v, want it to quote the value it read", err)
-	}
-	if strings.Contains(err.Error(), "unset or malformed") {
-		t.Errorf("refusal = %v, want no claim about a variable that is set and well formed", err)
 	}
 }
 
@@ -1636,10 +1626,10 @@ func TestStatusReportsWaitingOnlyForTheRunTheMarkerNames(t *testing.T) {
 	if err := os.WriteFile(ws.runningFile(), []byte("build\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	declare(t, "12", "waiting", "needs input")
+	declare(t, "%12", "waiting", "needs input")
 	var code int
 	out := captured(t, func() { code = ws.reportStatus("7") })
-	want := "pane 12  waiting build: needs input  log " + ws.logFile("build")
+	want := "pane %12  waiting build: needs input  log " + ws.logFile("build")
 	if code != 0 || !strings.Contains(out, want) {
 		t.Errorf("--status on a blocked run = %d, %q; want %q", code, out, want)
 	}
@@ -1648,16 +1638,16 @@ func TestStatusReportsWaitingOnlyForTheRunTheMarkerNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = captured(t, func() { code = ws.reportStatus("7") })
-	if code != 0 || !strings.Contains(out, "pane 12  idle  in "+ws.root) {
+	if code != 0 || !strings.Contains(out, "pane %12  idle  in "+ws.root) {
 		t.Errorf("--status on a hand-started harness = %d, %q; want the idle line", code, out)
 	}
 
 	if err := os.WriteFile(ws.runningFile(), []byte("build\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	declare(t, "12", "working", "Bash: nix build")
+	declare(t, "%12", "working", "Bash: nix build")
 	out = captured(t, func() { code = ws.reportStatus("7") })
-	if !strings.Contains(out, "pane 12  running build") {
+	if !strings.Contains(out, "pane %12  running build") {
 		t.Errorf("--status on an undeclared run = %q, want the running line", out)
 	}
 }
@@ -1672,7 +1662,7 @@ func TestTheBlockedWaitReturnsOnBlockedAndStillLosesToAnExit(t *testing.T) {
 	if err := os.WriteFile(ws.runningFile(), []byte("build\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	declare(t, "12", "waiting", "needs input")
+	declare(t, "%12", "waiting", "needs input")
 
 	var code int
 	out := captured(t, func() { code = ws.waitForBlocked("build", "12", 1, 5) })
@@ -1704,7 +1694,7 @@ func TestABlockedWaitDoesNotReturnForAnotherRunsState(t *testing.T) {
 	if err := os.WriteFile(ws.logFile("mine"), []byte("\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	declare(t, "12", "waiting", "needs input")
+	declare(t, "%12", "waiting", "needs input")
 
 	if err := os.WriteFile(ws.runningFile(), []byte("theirs\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1736,7 +1726,7 @@ func TestTheBodyClearsADeclaredWaitingAndNothingElse(t *testing.T) {
 	}
 	state(t)
 	ws := workspaceIn(t, t.TempDir())
-	t.Setenv("WEZTERM_PANE", "12")
+	t.Setenv("TMUX_PANE", "%12")
 
 	home := t.TempDir()
 	calls := filepath.Join(home, "calls")
@@ -1761,7 +1751,7 @@ func TestTheBodyClearsADeclaredWaitingAndNothingElse(t *testing.T) {
 		t.Errorf("the trap wrote state for a run that declared none: %q", got)
 	}
 
-	declare(t, "12", "waiting", "needs input")
+	declare(t, "%12", "waiting", "needs input")
 	body = ws.bodyFile("run2")
 	if err := ws.writeBody(body, "run2", t.TempDir(), "true"); err != nil {
 		t.Fatal(err)
@@ -1788,18 +1778,18 @@ func TestCloseRemovesThePanesStateRecord(t *testing.T) {
 	mux.install(t)
 	ws := workspaceIn(t, t.TempDir())
 	ws.live(t, "12")
-	declare(t, "12", "waiting", "needs input")
-	declare(t, "7", "working", "the caller")
+	declare(t, "%12", "waiting", "needs input")
+	declare(t, "%7", "working", "the caller")
 
 	out := captured(t, func() { ws.closePane("7") })
 	if !strings.Contains(out, "its state record is removed") {
 		t.Errorf("close said %q, want it to report the record it removed", out)
 	}
-	worker, _ := agentstate.PaneRecord("12")
+	worker, _ := agentstate.PaneRecord("%12")
 	if _, err := os.Stat(worker); err == nil {
 		t.Error("the killed pane is still listed as waiting on every surface")
 	}
-	caller, _ := agentstate.PaneRecord("7")
+	caller, _ := agentstate.PaneRecord("%7")
 	if _, err := os.Stat(caller); err != nil {
 		t.Error("close removed the record of a pane it did not kill")
 	}

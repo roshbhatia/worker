@@ -56,7 +56,7 @@ func workerState(t *testing.T) string {
 
 func TestTheWorkerSourceResolvesByDirectoryNotByPane(t *testing.T) {
 	root := workerState(t)
-	t.Setenv("WEZTERM_PANE", "99")
+	t.Setenv("TMUX_PANE", "%99")
 
 	one, err := newWorker([]string{t.TempDir()}, "last")
 	if err != nil {
