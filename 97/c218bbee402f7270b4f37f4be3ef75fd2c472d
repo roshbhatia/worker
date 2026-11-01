@@ -1,0 +1,47 @@
+flake.nix
+  s_00f0f53292bea7::t_070f39eb451f41 24
+  s_00f0f53292bea7::t_bd4c255222a707 35
+internal/worker/worker_test.go
+  s_00f0f53292bea7::t_0dd2f7fd3c85f6 147
+  s_00f0f53292bea7::t_d77b54ce8b34a3 6
+  s_00f0f53292bea7::t_683aaa0f97ecfb 226,256,416-417,443,932,1477,1485,1641,1650,1729
+  s_00f0f53292bea7::t_54cffd6d8fdd6c 304,1026,1492,1509,1532,1632
+  s_00f0f53292bea7::t_1512da4199ebe6 45-50
+  s_00f0f53292bea7::t_24062bdc6fb288 99,103,105,107-108,110,117,132,142,267,270,325,330,478,948
+  s_00f0f53292bea7::t_c1627b655621c2 1552,1566-1567,1583,1590
+  s_00f0f53292bea7::t_e9b1f1bf9b2e06 214,217-221,263,321,335-336,1629,1648,1665,1697,1754,1781-1782,1788,1792
+  s_00f0f53292bea7::t_40274d919a5b72 1490,1497
+internal/watch/watch_test.go
+  s_00f0f53292bea7::t_40274d919a5b72 59
+internal/worker/worker.go
+  s_00f0f53292bea7::t_d4ca13a08b9de6 316-318
+  s_00f0f53292bea7::t_54d3fb8696fe67 290,468,473,516
+  s_00f0f53292bea7::t_b2f442cc43cced 708,864,868-873,892,905
+  s_00f0f53292bea7::t_5a4328d0de5294 449,743
+  s_00f0f53292bea7::t_2bbdc64aa7e9bb 24,79,81
+  s_00f0f53292bea7::t_d6cfefbc8b71ad 409,433,435-445,559,563-564,576
+  s_00f0f53292bea7::t_e0f13c8bcadd5b 171-172
+  s_00f0f53292bea7::t_c85bc058bb10b3 175,180,432,558,878-884,886
+README.md
+  s_00f0f53292bea7::t_17afc4d0f7ea50 15
+go.mod
+  s_00f0f53292bea7::t_2979844a4a05da 6
+go.sum
+  s_00f0f53292bea7::t_bf964a36df8b7c 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "97c218bbee402f7270b4f37f4be3ef75fd2c472d",
+  "prompts": {},
+  "sessions": {
+    "s_00f0f53292bea7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1933c-a6e8-7442-97c4-87ca5f511b94",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Roshan Bhatia <rshnbhatia@gmail.com>"
+    }
+  }
+}
