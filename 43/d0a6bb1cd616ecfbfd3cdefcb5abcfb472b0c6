@@ -1,0 +1,29 @@
+README.md
+  s_00f0f53292bea7::t_217bf8ce7e4a24 15
+flake.nix
+  s_00f0f53292bea7::t_24f5c85b791634 24,35
+go.mod
+  s_00f0f53292bea7::t_297e2cd7d472e3 6
+internal/watch/watch_test.go
+  s_00f0f53292bea7::t_195e7e0b3d14f7 59
+internal/worker/worker.go
+  s_00f0f53292bea7::t_51511d26509c9a 7,25,80,82,172-173,180,290,406,429-433,435,461,504,546-548,552-553,565,697,852,856-864,869-871,873-875,881,894,1080-1089
+internal/worker/worker_test.go
+  s_00f0f53292bea7::t_76fb7ef57227b7 10,45,94,98-101,103,105-107,109,116,131,141,146,213,216-217,222,252,259,263,266,300,317,321,326,331-332,412-413,439,474,928,944,1022,1473,1481,1486,1488,1493,1505,1528,1548,1562-1563,1579-1587,1594,1599-1604,1639,1642,1651,1658,1660,1675,1707,1739,1764,1791-1792,1798,1802
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43d0a6bb1cd616ecfbfd3cdefcb5abcfb472b0c6",
+  "prompts": {},
+  "sessions": {
+    "s_00f0f53292bea7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1933c-a6e8-7442-97c4-87ca5f511b94",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Roshan Bhatia <rshnbhatia@gmail.com>"
+    }
+  }
+}
