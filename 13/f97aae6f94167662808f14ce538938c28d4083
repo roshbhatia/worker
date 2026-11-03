@@ -1,0 +1,25 @@
+README.md
+  s_b6baf4162ed3c9::t_b4eee6500992eb 3,15,22
+flake.nix
+  s_b6baf4162ed3c9::t_ff6e4526acbbd8 36
+internal/worker/worker.go
+  s_b6baf4162ed3c9::t_edf829cacbdea5 81-83,85,127-131,142,178-180,416-417,427-445,471-473,494,535,724-730,732,763,867-868,870-876,906-925,938-939,946-948,955-956,1152-1159
+internal/worker/worker_test.go
+  s_b6baf4162ed3c9::t_4144b50f55eb6c 1743,1748,1775,1948-1992
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13f97aae6f94167662808f14ce538938c28d4083",
+  "prompts": {},
+  "sessions": {
+    "s_b6baf4162ed3c9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19cf6-a9c0-7161-abce-266a87939179",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Roshan Bhatia <rshnbhatia@gmail.com>"
+    }
+  }
+}
