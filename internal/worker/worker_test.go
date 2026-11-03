@@ -1740,14 +1740,12 @@ func TestTheBodyClearsADeclaredWaitingAndNothingElse(t *testing.T) {
 
 	home := t.TempDir()
 	calls := filepath.Join(home, "calls")
-	stub := filepath.Join(home, "stub")
+	stub := filepath.Join(home, "agent-state")
 	script := "#!/usr/bin/env zsh\nprint -r -- \"$@\" >> " + calls + "\n"
 	if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	realSelf := self
-	t.Cleanup(func() { self = realSelf })
-	self = func() string { return stub }
+	t.Setenv("PATH", home+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	body := ws.bodyFile("run1")
 	if err := ws.writeBody(body, "run1", t.TempDir(), "true"); err != nil {
@@ -1774,7 +1772,7 @@ func TestTheBodyClearsADeclaredWaitingAndNothingElse(t *testing.T) {
 		t.Fatalf("the trap did not clear a declared waiting: %v", err)
 	}
 	line := strings.TrimSpace(string(got))
-	if !strings.HasPrefix(line, "agent-state worker idle") {
+	if !strings.HasPrefix(line, "worker idle") {
 		t.Errorf("the trap called %q, want the ranked status idle", line)
 	}
 	if strings.Contains(line, "exit") {
@@ -1946,4 +1944,49 @@ func TestPruneRemovesTheSupersededRootUnlessOneWasJustReported(t *testing.T) {
 	if !strings.Contains(line, "removed the superseded wtrun root") {
 		t.Errorf("report = %q, want it to name what it removed", line)
 	}
+}
+
+func TestTmuxMuxBoundary(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%7")
+	t.Setenv("TMUX", "/tmp/tmux-503/default,4321,0")
+	command, args := muxCommand([]string{"cli", "split-pane", "--pane-id", "7", "--bottom", "--percent", "40"})
+	if command != "tmux" || strings.Join(args, " ") != "split-window -P -F #{s/^%//:pane_id} -t %7 -v -p 40" {
+		t.Fatalf("unexpected split: %s %v", command, args)
+	}
+	if currentMux() != "4321" || statePane("7") != "%7" {
+		t.Fatal("tmux identity does not match agent state")
+	}
+}
+
+func TestTmuxPrunePreservesNativeWorkerRecords(t *testing.T) {
+	state(t)
+	directory := t.TempDir()
+	native := workspaceIn(t, directory)
+	native.live(t, "7")
+	legacy := paths.AgentWtrun()
+	if err := os.MkdirAll(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_PANE", "%7")
+	t.Setenv("TMUX", "/tmp/tmux-503/default,4321,0")
+	migrated, err := newWorkspace(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.dir == native.dir {
+		t.Fatal("tmux and native workers share records")
+	}
+	prune(false)
+	for _, path := range []string{native.paneFile(), legacy} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("native worker state removed: %s: %v", path, err)
+		}
+	}
+}
+
+func TestMain(m *testing.M) {
+	for _, key := range []string{"TMUX", "TMUX_PANE", "WEZTERM_PANE", "SYSINIT_TY_BACKEND"} {
+		_ = os.Unsetenv(key)
+	}
+	os.Exit(m.Run())
 }

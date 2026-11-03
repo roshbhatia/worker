@@ -33,6 +33,7 @@
                   pkgs.lib.makeBinPath [
                     pkgs.git
                     pkgs.wezterm
+                    pkgs.tmux
                     pkgs.zsh
                     pkgs.coreutils
                   ]
